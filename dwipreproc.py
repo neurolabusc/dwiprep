@@ -414,89 +414,86 @@ def step_topup_eddy(info, b0tolerance, nthr, isPadOdd, force=False):
 # ---------------------------------------------------------------------------
 
 def step_dtifit(info, base_name, force=False):
-    with timed_step("DTI Fit"):
-        out_prefix = base_name
-        Path(out_prefix).parent.mkdir(parents=True, exist_ok=True)
-        fa_path = out_prefix + "_FA.nii.gz"
-        if step_done(fa_path, force):
-            info["fa_path"] = fa_path
-            info["fa_thr_path"] = out_prefix + "_FA_thr.nii.gz"
-            if not Path(info["fa_thr_path"]).exists():
-                run_cmd([
-                    "fslmaths", fa_path, "-ero", "-thr", "0.15", "-bin",
-                    info["fa_thr_path"]
-                ])
-            return
-        run_cmd(["dtifit", f"--data={info['eddy_nii']}", f"--out={out_prefix}", f"--mask={info['brain_mask']}", f"--bvecs={info['rotated_bvecs']}", f"--bvals={info['merged_bval']}"])
-        fa_thr = out_prefix + "_FA_thr.nii.gz"
-        run_cmd(["fslmaths", fa_path, "-ero", "-thr", "0.15", "-bin", fa_thr])
+    logger.info("=== DTI Fit ===")
+    out_prefix = base_name
+    Path(out_prefix).parent.mkdir(parents=True, exist_ok=True)
+    fa_path = out_prefix + "_FA.nii.gz"
+    if step_done(fa_path, force):
         info["fa_path"] = fa_path
-        info["fa_thr_path"] = fa_thr
+        info["fa_thr_path"] = out_prefix + "_FA_thr.nii.gz"
+        if not Path(info["fa_thr_path"]).exists():
+            run_cmd(["fslmaths", fa_path, "-ero", "-thr", "0.15", "-bin", info["fa_thr_path"]])
+        return
+    run_cmd(["dtifit", f"--data={info['eddy_nii']}", f"--out={out_prefix}", f"--mask={info['brain_mask']}", f"--bvecs={info['rotated_bvecs']}", f"--bvals={info['merged_bval']}"])
+    fa_thr = out_prefix + "_FA_thr.nii.gz"
+    run_cmd(["fslmaths", fa_path, "-ero", "-thr", "0.15", "-bin", fa_thr])
+    info["fa_path"] = fa_path
+    info["fa_thr_path"] = fa_thr
 
 # ---------------------------------------------------------------------------
 # Step 4: Rim Clean
 # ---------------------------------------------------------------------------
 
 def step_rim_clean(info, output_dir, base_name, force=False):
-    with timed_step("Rim Clean"):
-        fa_path = info["fa_path"]
-        cleaned_fa = str(Path(output_dir) / f"r{Path(base_name).name}_FA.nii.gz")
+    logger.info("=== Rim Clean ===")
+    fa_path = info["fa_path"]
+    cleaned_fa = str(Path(output_dir) / f"r{Path(base_name).name}_FA.nii.gz")
 
-        if step_done(cleaned_fa, force):
-            info["cleaned_fa_path"] = cleaned_fa
-            return
-
-        img = nib.load(fa_path)
-        data = img.get_fdata(dtype=np.float32)
-        cleaned = data.copy()
-
-        mask = (data > 0).astype(np.uint8)
-        dist_map = distance_transform_edt(mask)
-
-        total_flagged = 0
-        for iteration in range(1):
-            outer_dist = float(iteration + 1)
-            inner_dist = float(iteration + 2)
-
-            outer_band = dist_map == outer_dist
-            inner_band = dist_map == inner_dist
-            n_outer = int(outer_band.sum())
-            logger.info("Iteration %d/1 (shell dist=%d vs dist=%d) — %d rim voxels",
-                        iteration + 1, int(outer_dist), int(inner_dist), n_outer)
-
-            inner_indices = set(zip(*np.where(inner_band)))
-            outer_coords = np.argwhere(outer_band)
-            artefact_mask = np.zeros(data.shape, dtype=bool)
-
-            for (x, y, z) in outer_coords:
-                outer_val = cleaned[x, y, z]
-                if outer_val == 0.0:
-                    continue
-                inner_vals = []
-                for dx in (-1, 0, 1):
-                    for dy in (-1, 0, 1):
-                        for dz in (-1, 0, 1):
-                            if dx == 0 and dy == 0 and dz == 0:
-                                continue
-                            nx, ny, nz = x + dx, y + dy, z + dz
-                            if (nx, ny, nz) in inner_indices:
-                                inner_vals.append(cleaned[nx, ny, nz])
-                if not inner_vals:
-                    artefact_mask[x, y, z] = True
-                    continue
-                if outer_val > np.median(inner_vals):
-                    artefact_mask[x, y, z] = True
-
-            n_flagged = int(artefact_mask.sum())
-            logger.info("Artefacts flagged: %d / %d (%.1f%%)", n_flagged, n_outer,
-                        100.0 * n_flagged / n_outer if n_outer > 0 else 0.0)
-            cleaned[artefact_mask] = 0.0
-            total_flagged += n_flagged
-
-        logger.info("Total voxels zeroed: %d", total_flagged)
-        out_img = nib.Nifti1Image(cleaned, img.affine, img.header)
-        nib.save(out_img, cleaned_fa)
+    if step_done(cleaned_fa, force):
         info["cleaned_fa_path"] = cleaned_fa
+        return
+
+    img = nib.load(fa_path)
+    data = img.get_fdata(dtype=np.float32)
+    cleaned = data.copy()
+
+    mask = (data > 0).astype(np.uint8)
+    dist_map = distance_transform_edt(mask)
+
+    total_flagged = 0
+    for iteration in range(1):
+        outer_dist = float(iteration + 1)
+        inner_dist = float(iteration + 2)
+
+        outer_band = dist_map == outer_dist
+        inner_band = dist_map == inner_dist
+        n_outer = int(outer_band.sum())
+        logger.info("Iteration %d/1 (shell dist=%d vs dist=%d) — %d rim voxels",
+                    iteration + 1, int(outer_dist), int(inner_dist), n_outer)
+
+        inner_indices = set(zip(*np.where(inner_band)))
+        outer_coords = np.argwhere(outer_band)
+        artefact_mask = np.zeros(data.shape, dtype=bool)
+
+        for (x, y, z) in outer_coords:
+            outer_val = cleaned[x, y, z]
+            if outer_val == 0.0:
+                continue
+            inner_vals = []
+            for dx in (-1, 0, 1):
+                for dy in (-1, 0, 1):
+                    for dz in (-1, 0, 1):
+                        if dx == 0 and dy == 0 and dz == 0:
+                            continue
+                        nx, ny, nz = x + dx, y + dy, z + dz
+                        if (nx, ny, nz) in inner_indices:
+                            inner_vals.append(cleaned[nx, ny, nz])
+            if not inner_vals:
+                artefact_mask[x, y, z] = True
+                continue
+            if outer_val > np.median(inner_vals):
+                artefact_mask[x, y, z] = True
+
+        n_flagged = int(artefact_mask.sum())
+        logger.info("Artefacts flagged: %d / %d (%.1f%%)", n_flagged, n_outer,
+                    100.0 * n_flagged / n_outer if n_outer > 0 else 0.0)
+        cleaned[artefact_mask] = 0.0
+        total_flagged += n_flagged
+
+    logger.info("Total voxels zeroed: %d", total_flagged)
+    out_img = nib.Nifti1Image(cleaned, img.affine, img.header)
+    nib.save(out_img, cleaned_fa)
+    info["cleaned_fa_path"] = cleaned_fa
 
 # ---------------------------------------------------------------------------
 # Step 5: MMORF Atlas Registration
@@ -543,9 +540,9 @@ def step_mmorf_atlas(info, output_dir, nthr, template_path=None, atlas_path=None
 
     # Linear registration (FLIRT)
     if not Path(affine_mat).exists():
-        with timed_step("FLIRT linear registration"):
-            run_cmd(["flirt", "-in", template_path, "-ref", target,
-                     "-omat", affine_mat, "-dof", "12"])
+        logger.info("=== FLIRT linear registration ===")
+        run_cmd(["flirt", "-in", template_path, "-ref", target,
+                 "-omat", affine_mat, "-dof", "12"])
 
     # MMORF config
     config_content = f"""\
@@ -644,32 +641,32 @@ def run_bedpost_step(info, input_dir, force=False):
 # ---------------------------------------------------------------------------
 
 def step_extract_masks(info, output_dir, force=False):
-    with timed_step("Extract Masks"):
-        masks_dir = ensure_dir(Path(output_dir) / "masks")
-        atlas_path = info["atlas_native"]
+    logger.info("=== Extract Masks ===")
+    masks_dir = ensure_dir(Path(output_dir) / "masks")
+    atlas_path = info["atlas_native"]
 
-        img = nib.load(atlas_path)
-        data = np.round(img.get_fdata()).astype(int)
+    img = nib.load(atlas_path)
+    data = np.round(img.get_fdata()).astype(int)
 
-        indices = sorted(set(data[data > 0].ravel()))
+    indices = sorted(set(data[data > 0].ravel()))
 
-        created = 0
-        skipped = 0
-        for idx in indices:
-            mask_path = str(masks_dir / f"{idx}.nii")
-            if step_done(mask_path, force):
-                skipped += 1
-                continue
-            mask_data = (data == idx).astype(np.uint8)
-            if mask_data.sum() == 0:
-                continue
-            mask_img = nib.Nifti1Image(mask_data, img.affine, img.header)
-            mask_img.set_data_dtype(np.uint8)
-            nib.save(mask_img, mask_path)
-            created += 1
+    created = 0
+    skipped = 0
+    for idx in indices:
+        mask_path = str(masks_dir / f"{idx}.nii")
+        if step_done(mask_path, force):
+            skipped += 1
+            continue
+        mask_data = (data == idx).astype(np.uint8)
+        if mask_data.sum() == 0:
+            continue
+        mask_img = nib.Nifti1Image(mask_data, img.affine, img.header)
+        mask_img.set_data_dtype(np.uint8)
+        nib.save(mask_img, mask_path)
+        created += 1
 
-        logger.info("Created %d mask files (%d skipped) in %s", created, skipped, masks_dir)
-        info["masks_dir"] = str(masks_dir)
+    logger.info("Created %d mask files (%d skipped) in %s", created, skipped, masks_dir)
+    info["masks_dir"] = str(masks_dir)
 
 # ---------------------------------------------------------------------------
 # Step 8: Probtrackx
@@ -714,16 +711,19 @@ def step_probtrackx(info, output_dir, force=False):
             return
 
         if has_seedlist_support():
-            # ... (keep existing seedlist logic)
+            seedlist_file = probtrackx_dir / "seedlist.txt"
+            with open(seedlist_file, "w") as f:
+                for mask_file, out_dir in pending:
+                    f.write(f"{mask_file} {out_dir}\n")
+            logger.info("Running probtrackx2_gpu --seedlist (%d seeds)", len(pending))
             run_cmd([
                 "probtrackx2_gpu",
                 f"--seedlist={seedlist_file}",
-                "--logdir=" + str(log_dir), # Add logdir flag here for GPU version
                 "-P", "5000",
                 "-s", merged,
                 "-m", nodif_mask,
                 "--opd", "--pd", "-l", "-c", "0.2", "--distthresh=0",
-            ])
+            ], cwd=log_dir)
         else:
             logger.info("--seedlist not supported, falling back to serial fsl_sub")
             commands = []
@@ -748,112 +748,112 @@ def step_probtrackx(info, output_dir, force=False):
 # ---------------------------------------------------------------------------
 
 def step_fiber_quantify(info, output_dir, num_samples=5000, force=False):
-    with timed_step("Fiber Quantify"):
-        masks_dir = Path(info["masks_dir"])
-        probtrackx_dir = Path(output_dir) / "probtrackx"
-        quant_dir = ensure_dir(Path(output_dir) / "connectivity")
+    logger.info("=== Fiber Quantify ===")
+    masks_dir = Path(info["masks_dir"])
+    probtrackx_dir = Path(output_dir) / "probtrackx"
+    quant_dir = ensure_dir(Path(output_dir) / "connectivity")
 
-        density_npy = quant_dir / "density.npy"
-        if step_done(str(density_npy), force):
-            return
+    density_npy = quant_dir / "density.npy"
+    if step_done(str(density_npy), force):
+        return
 
-        # Discover regions and check that probtrackx has completed
-        mask_files = sorted(masks_dir.glob("*.nii"), key=lambda p: int(p.stem))
-        indices = [int(f.stem) for f in mask_files]
-        n = len(indices)
-        idx_to_pos = {idx: pos for pos, idx in enumerate(indices)}
+    # Discover regions and check that probtrackx has completed
+    mask_files = sorted(masks_dir.glob("*.nii"), key=lambda p: int(p.stem))
+    indices = [int(f.stem) for f in mask_files]
+    n = len(indices)
+    idx_to_pos = {idx: pos for pos, idx in enumerate(indices)}
 
-        missing = []
-        for idx in indices:
-            fdt = probtrackx_dir / str(idx) / "fdt_paths.nii.gz"
-            if not fdt.exists():
-                missing.append(idx)
-        if missing:
-            logger.warning("Probtrackx incomplete (%d/%d regions missing) — "
-                           "skipping fiber quantify. Re-run after probtrackx finishes.",
-                           len(missing), n)
-            return
+    missing = []
+    for idx in indices:
+        fdt = probtrackx_dir / str(idx) / "fdt_paths.nii.gz"
+        if not fdt.exists():
+            missing.append(idx)
+    if missing:
+        logger.warning("Probtrackx incomplete (%d/%d regions missing) — "
+                       "skipping fiber quantify. Re-run after probtrackx finishes.",
+                       len(missing), n)
+        return
 
-        # Pre-load all masks and probtrackx results as flat arrays
-        masks = {}
-        mask_nvox = {}
-        probs = {}
+    # Pre-load all masks and probtrackx results as flat arrays
+    masks = {}
+    mask_nvox = {}
+    probs = {}
 
-        for idx in indices:
-            mask_data = nib.load(str(masks_dir / f"{idx}.nii")).get_fdata().ravel()
-            masks[idx] = mask_data
-            mask_nvox[idx] = int((mask_data > 0).sum())
+    for idx in indices:
+        mask_data = nib.load(str(masks_dir / f"{idx}.nii")).get_fdata().ravel()
+        masks[idx] = mask_data
+        mask_nvox[idx] = int((mask_data > 0).sum())
 
-            prob_data = nib.load(
-                str(probtrackx_dir / str(idx) / "fdt_paths.nii.gz")
-            ).get_fdata().ravel()
-            probs[idx] = prob_data
+        prob_data = nib.load(
+            str(probtrackx_dir / str(idx) / "fdt_paths.nii.gz")
+        ).get_fdata().ravel()
+        probs[idx] = prob_data
 
-        # Initialise symmetric NxN matrices (1 on diagonal, like Matlab)
-        density_mat = np.eye(n)
-        fiber_count_mat = np.eye(n)
-        mean_mat = np.eye(n)
-        max_mat = np.eye(n)
+    # Initialise symmetric NxN matrices (1 on diagonal, like Matlab)
+    density_mat = np.eye(n)
+    fiber_count_mat = np.eye(n)
+    mean_mat = np.eye(n)
+    max_mat = np.eye(n)
 
-        logger.info("Computing pairwise connectivity for %d regions", n)
+    logger.info("Computing pairwise connectivity for %d regions", n)
 
-        for ii in range(n):
-            i = indices[ii]
-            pi = idx_to_pos[i]
-            for jj in range(ii + 1, n):
-                j = indices[jj]
-                pj = idx_to_pos[j]
+    for ii in range(n):
+        i = indices[ii]
+        pi = idx_to_pos[i]
+        for jj in range(ii + 1, n):
+            j = indices[jj]
+            pj = idx_to_pos[j]
 
-                # prob(i) values within mask(j)
-                vals_ij = probs[i][masks[j] > 0]
-                ij_mean = vals_ij.mean() if len(vals_ij) > 0 else 0.0
-                ij_max = vals_ij.max() if len(vals_ij) > 0 else 0.0
+            # prob(i) values within mask(j)
+            vals_ij = probs[i][masks[j] > 0]
+            ij_mean = vals_ij.mean() if len(vals_ij) > 0 else 0.0
+            ij_max = vals_ij.max() if len(vals_ij) > 0 else 0.0
 
-                # prob(j) values within mask(i)
-                vals_ji = probs[j][masks[i] > 0]
-                ji_mean = vals_ji.mean() if len(vals_ji) > 0 else 0.0
-                ji_max = vals_ji.max() if len(vals_ji) > 0 else 0.0
+            # prob(j) values within mask(i)
+            vals_ji = probs[j][masks[i] > 0]
+            ji_mean = vals_ji.mean() if len(vals_ji) > 0 else 0.0
+            ji_max = vals_ji.max() if len(vals_ji) > 0 else 0.0
 
-                # mean_mat / max_mat: mean/max of all values in masked region
-                mean_mat[pi, pj] = ij_mean + ji_mean
-                mean_mat[pj, pi] = mean_mat[pi, pj]
-                max_mat[pi, pj] = ij_max + ji_max
-                max_mat[pj, pi] = max_mat[pi, pj]
+            # mean_mat / max_mat: mean/max of all values in masked region
+            mean_mat[pi, pj] = ij_mean + ji_mean
+            mean_mat[pj, pi] = mean_mat[pi, pj]
+            max_mat[pi, pj] = ij_max + ji_max
+            max_mat[pj, pi] = max_mat[pi, pj]
 
-                # density / fiber_count: nonzero mean (fslstats -M equivalent)
-                nz_ij = vals_ij[vals_ij != 0]
-                nz_ji = vals_ji[vals_ji != 0]
-                ij_nz_mean = nz_ij.mean() if len(nz_ij) > 0 else 0.0
-                ji_nz_mean = nz_ji.mean() if len(nz_ji) > 0 else 0.0
+            # density / fiber_count: nonzero mean (fslstats -M equivalent)
+            nz_ij = vals_ij[vals_ij != 0]
+            nz_ji = vals_ji[vals_ji != 0]
+            ij_nz_mean = nz_ij.mean() if len(nz_ij) > 0 else 0.0
+            ji_nz_mean = nz_ji.mean() if len(nz_ji) > 0 else 0.0
 
-                ij_sum = ij_nz_mean * mask_nvox[j]
-                ji_sum = ji_nz_mean * mask_nvox[i]
-                fc = ij_sum + ji_sum
-                nf = (mask_nvox[i] + mask_nvox[j]) * (num_samples + 1)
+            ij_sum = ij_nz_mean * mask_nvox[j]
+            ji_sum = ji_nz_mean * mask_nvox[i]
+            fc = ij_sum + ji_sum
+            nf = (mask_nvox[i] + mask_nvox[j]) * (num_samples + 1)
 
-                density_mat[pi, pj] = fc / nf if nf > 0 else 0.0
-                density_mat[pj, pi] = density_mat[pi, pj]
-                fiber_count_mat[pi, pj] = fc
-                fiber_count_mat[pj, pi] = fc
+            density_mat[pi, pj] = fc / nf if nf > 0 else 0.0
+            density_mat[pj, pi] = density_mat[pi, pj]
+            fiber_count_mat[pi, pj] = fc
+            fiber_count_mat[pj, pi] = fc
 
-        # Clean non-finite values
-        for mat in [density_mat, fiber_count_mat, mean_mat, max_mat]:
-            mat[~np.isfinite(mat)] = 0.0
+    # Clean non-finite values
+    for mat in [density_mat, fiber_count_mat, mean_mat, max_mat]:
+        mat[~np.isfinite(mat)] = 0.0
 
-        # Save as .npy and .tsv
-        labels = [str(i) for i in indices]
-        header = "\t".join([""] + labels)
+    # Save as .npy and .tsv
+    labels = [str(i) for i in indices]
+    header = "\t".join([""] + labels)
 
-        for name, mat in [("density", density_mat), ("fiber_count", fiber_count_mat),
-                          ("mean", mean_mat), ("max", max_mat)]:
-            np.save(str(quant_dir / f"{name}.npy"), mat)
-            with open(quant_dir / f"{name}.tsv", "w") as f:
-                f.write(header + "\n")
-                for row in range(n):
-                    vals = "\t".join(f"{v:.6g}" for v in mat[row])
-                    f.write(f"{labels[row]}\t{vals}\n")
+    for name, mat in [("density", density_mat), ("fiber_count", fiber_count_mat),
+                      ("mean", mean_mat), ("max", max_mat)]:
+        np.save(str(quant_dir / f"{name}.npy"), mat)
+        with open(quant_dir / f"{name}.tsv", "w") as f:
+            f.write(header + "\n")
+            for row in range(n):
+                vals = "\t".join(f"{v:.6g}" for v in mat[row])
+                f.write(f"{labels[row]}\t{vals}\n")
 
-        logger.info("Connectivity matrices (%dx%d) written to %s", n, n, quant_dir)
+    logger.info("Connectivity matrices (%dx%d) written to %s", n, n, quant_dir)
 
 # ---------------------------------------------------------------------------
 # Generate README
@@ -877,11 +877,23 @@ def generate_readme(output_dir):
                 seconds = round(float(m.group(2)))
                 rows.append((name, seconds))
 
+    total_row = None
+    other_rows = []
+    for name, seconds in rows:
+        if name.upper() == "TOTAL":
+            total_row = (name, seconds)
+        else:
+            other_rows.append((name, seconds))
+
+    rows = other_rows
+    if total_row:
+        rows.append(total_row)
+
     if not rows:
         return
 
-    name_width = max(max(len(r[0]) for r in rows), len("Stage"))
-    sec_width = max(max(len(str(r[1])) for r in rows), len("Seconds"))
+    name_width = max([len(r[0]) for r in rows] + [len("Stage")])
+    sec_width = max([len(str(r[1])) for r in rows] + [len("Seconds")])
 
     lines = [
         f"| {'Stage':<{name_width}} | {'Seconds':>{sec_width}} |",
@@ -941,31 +953,33 @@ def main():
                     "dtifit", "mmorf", "applywarp", "fsl_sub"])
     if not args.no_bedpost:
         find_bedpostx()
-    with timed_step("Input Validation"):
+
+    with timed_step("TOTAL"):
+        logger.info("=== Input Validation ===")
         info = validate_and_stage(str(input_dir), output_dir)
 
-    step_topup_eddy(info, args.b0tolerance, args.nthr, not args.no_pad_odd, args.force)
-    base_prefix = output_dir / args.baseName
-    step_dtifit(info, str(base_prefix), args.force)
+        step_topup_eddy(info, args.b0tolerance, args.nthr, not args.no_pad_odd, args.force)
+        base_prefix = output_dir / args.baseName
+        step_dtifit(info, str(base_prefix), args.force)
 
-    step_rim_clean(info, output_dir, str(base_prefix), args.force)
-    step_mmorf_atlas(info, output_dir, args.nthr, force=args.force)
+        step_rim_clean(info, output_dir, str(base_prefix), args.force)
+        step_mmorf_atlas(info, output_dir, args.nthr, force=args.force)
 
-    if not args.no_bedpost:
-        run_bedpost_step(info, output_dir, args.force)
+        if not args.no_bedpost:
+            run_bedpost_step(info, output_dir, args.force)
 
-    step_extract_masks(info, output_dir, args.force)
+        step_extract_masks(info, output_dir, args.force)
 
-    if not args.no_bedpost:
-        step_probtrackx(info, output_dir, args.force)
-        step_fiber_quantify(info, output_dir, force=args.force)
+        if not args.no_bedpost:
+            step_probtrackx(info, output_dir, args.force)
+            step_fiber_quantify(info, output_dir, force=args.force)
+
+        if not args.keep_temp:
+            td = info.get("tmp_dir")
+            if td and Path(td).exists():
+                shutil.rmtree(str(td))
 
     generate_readme(output_dir)
-
-    if not args.keep_temp:
-        td = info.get("tmp_dir")
-        if td and Path(td).exists():
-            shutil.rmtree(str(td))
 
 if __name__ == "__main__":
     main()

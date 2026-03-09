@@ -2,6 +2,14 @@
 
 A Python pipeline for processing diffusion-weighted MRI data using FSL tools. Takes a directory containing two DWI NIfTI files acquired with opposite phase-encoding directions (AP/PA) and runs a full preprocessing and analysis workflow.
 
+## Installation
+
+The pipeline requires a standard FSL installation along with a compatible graphics card and the corresponding accelerated tools, specifically mmorf, probtrackx2_gpu, bedpostx_gpu, and eddy_cuda. While NVIDIA users typically receive these via the standard FSL installer, macOS users must install the specific Metal-accelerated package to utilize eddy_metal on Apple Silicon. Python dependencies can be installed using pip install nibabel numpy scipy.
+
+```bash
+pip install -r requirements.txt
+```
+
 ## Usage
 
 ```bash
@@ -26,21 +34,27 @@ python dwipreproc.py ./dwi
 
 # Performance
 
-The `dwi` dataset provides a benchmark for processing a 140×140×81 diffusion dataset with 204 volumes. Here is the performance of an Apple M4 Pro:
+The `dwi` dataset provides a benchmark for processing a 140×140×81 diffusion dataset with 204 volumes. Here is the performance of an 48Gb Apple M4 Pro:
 
 | Stage                         | Seconds |
 | ----------------------------- | ------- |
-| Input Validation              |       0 |
-| Topup                         |     372 |
-| Eddy                          |     576 |
-| DTI Fit                       |       8 |
-| Rim Clean                     |       0 |
-| FLIRT linear registration     |       5 |
-| MMORF non-linear registration |      72 |
-| Bedpost                       |     107 |
-| Extract Masks                 |       0 |
-| Probtrackx                    |      81 |
-| Fiber Quantify                |       2 |
+| Topup                         |     379 |
+| Eddy                          |     531 |
+| MMORF non-linear registration |      76 |
+| Bedpost                       |     109 |
+| Probtrackx                    |      78 |
+| TOTAL                         |    1236 |
+
+Here is the same test on a 128 Gb DGX Spark using the executables from FSL 6.0.7.19.
+
+| Stage                         | Seconds |
+| ----------------------------- | ------- |
+| Topup                         |     318 |
+| Eddy                          |    3473 |
+| MMORF non-linear registration |     156 |
+| Bedpost                       |     630 |
+| Probtrackx                    |     337 |
+| Total                         |    4958 |
 
 
 
