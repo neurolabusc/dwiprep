@@ -380,7 +380,7 @@ def step_topup_eddy(info, b0tolerance, nthr, isPadOdd, force=False):
     topup_b0_mean = str(tmp / "topup_b0_mean.nii.gz")
     if not step_done(brain_mask, force):
         run_cmd(["fslmaths", str(tmp / "topup_b0.nii.gz"), "-Tmean", topup_b0_mean])
-        run_cmd(["bet", topup_b0_mean, str(tmp / "brain"), "-f", "0.25", "-R", "-S", "-m"])
+        run_cmd(["bet", topup_b0_mean, str(tmp / "brain"), "-f", "0.25", "-R", "-m"])
 
     merged_nii = str(tmp / "merged.nii.gz")
     run_cmd(["fslmerge", "-t", merged_nii, str(tmp / "dti.nii.gz"), str(tmp / "dtiR.nii.gz")])
@@ -672,11 +672,12 @@ def step_extract_masks(info, output_dir, force=False):
 # Step 8: Probtrackx
 # ---------------------------------------------------------------------------
 
-def has_seedlist_support():
-    """Check if probtrackx2_gpu supports --seedlist."""
+def has_seedlist_support(executable):
+    """Check if the provided probtrackx2_gpu executable supports --seedlist."""
     try:
+        # We now use the explicit path passed from the main step
         result = subprocess.run(
-            ["probtrackx2_gpu", "--help"],
+            [executable, "--help"],
             capture_output=True, text=True, timeout=10,
         )
         return "--seedlist" in result.stdout or "--seedlist" in result.stderr
@@ -686,10 +687,17 @@ def has_seedlist_support():
 
 def step_probtrackx(info, output_dir, force=False):
     with timed_step("Probtrackx"):
+        # 1. Resolve the correct binary at the very start
+        fsld = os.environ.get("FSLDIR")
+        if not fsld:
+            raise EnvironmentError("FSLDIR environment variable not set.")
+        
+        # Explicitly target the binary in 'bin' to bypass buggy 'share' wrappers
+        probtrackx_bin = os.path.join(fsld, "bin", "probtrackx2_gpu")
+
         masks_dir = Path(info["masks_dir"])
         bedpostx_dir = Path(info["bedpostx_dir"])
         probtrackx_dir = ensure_dir(Path(output_dir) / "probtrackx")
-        # This is where we want the logs
         log_dir = ensure_dir(probtrackx_dir / "logs") 
 
         merged = str(bedpostx_dir / "merged")
@@ -710,14 +718,16 @@ def step_probtrackx(info, output_dir, force=False):
             logger.info("All probtrackx seeds already complete")
             return
 
-        if has_seedlist_support():
+        # 2. Pass the resolved binary to the support check
+        if has_seedlist_support(probtrackx_bin):
             seedlist_file = probtrackx_dir / "seedlist.txt"
             with open(seedlist_file, "w") as f:
                 for mask_file, out_dir in pending:
                     f.write(f"{mask_file} {out_dir}\n")
+            
             logger.info("Running probtrackx2_gpu --seedlist (%d seeds)", len(pending))
             run_cmd([
-                "probtrackx2_gpu",
+                probtrackx_bin, # Use resolved binary
                 f"--seedlist={seedlist_file}",
                 "-P", "5000",
                 "-s", merged,
@@ -728,7 +738,8 @@ def step_probtrackx(info, output_dir, force=False):
             logger.info("--seedlist not supported, falling back to serial fsl_sub")
             commands = []
             for mask_file, out_dir in pending:
-                cmd = (f"probtrackx2_gpu -x {mask_file} "
+                # 3. Use the resolved binary in the task list
+                cmd = (f"{probtrackx_bin} -x {mask_file} "
                        f"--dir={out_dir} --forcedir "
                        f"-P 5000 -s {merged} -m {nodif_mask} "
                        f"--opd --pd -l -c 0.2 --distthresh=0")
@@ -738,8 +749,6 @@ def step_probtrackx(info, output_dir, force=False):
             with open(cmd_file, "w") as f:
                 f.write("\n".join(commands) + "\n")
             
-            # n.b.: Execute the command with the log_dir as the CWD 
-            # so fsl_sub writes its own logs there.
             run_cmd(["fsl_sub", "-l", ".", "-N", "probtrackx",
                      "-T", "1", "-t", str(cmd_file)], cwd=log_dir)
 
