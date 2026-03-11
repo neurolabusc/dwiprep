@@ -709,8 +709,11 @@ def step_probtrackx(info, output_dir, force=False):
         for mask_file in mask_files:
             idx = mask_file.stem
             out_dir = probtrackx_dir / idx
+            # probtrackx2_gpu --seedlist appends '+' to the output dir name
+            out_dir_plus = probtrackx_dir / f"{idx}+"
             fdt_paths = out_dir / "fdt_paths.nii.gz"
-            if not step_done(str(fdt_paths), force):
+            fdt_paths_plus = out_dir_plus / "fdt_paths.nii.gz"
+            if not (step_done(str(fdt_paths), force) or step_done(str(fdt_paths_plus), force)):
                 ensure_dir(out_dir)
                 pending.append((mask_file, out_dir))
 
@@ -772,10 +775,18 @@ def step_fiber_quantify(info, output_dir, num_samples=5000, force=False):
     n = len(indices)
     idx_to_pos = {idx: pos for pos, idx in enumerate(indices)}
 
+    # probtrackx2_gpu --seedlist appends '+' to output dir names;
+    # build a mapping from region index to whichever path actually exists.
+    fdt_map = {}
     missing = []
     for idx in indices:
         fdt = probtrackx_dir / str(idx) / "fdt_paths.nii.gz"
-        if not fdt.exists():
+        fdt_plus = probtrackx_dir / f"{idx}+" / "fdt_paths.nii.gz"
+        if fdt.exists():
+            fdt_map[idx] = fdt
+        elif fdt_plus.exists():
+            fdt_map[idx] = fdt_plus
+        else:
             missing.append(idx)
     if missing:
         logger.warning("Probtrackx incomplete (%d/%d regions missing) — "
@@ -794,7 +805,7 @@ def step_fiber_quantify(info, output_dir, num_samples=5000, force=False):
         mask_nvox[idx] = int((mask_data > 0).sum())
 
         prob_data = nib.load(
-            str(probtrackx_dir / str(idx) / "fdt_paths.nii.gz")
+            str(fdt_map[idx])
         ).get_fdata().ravel()
         probs[idx] = prob_data
 

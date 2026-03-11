@@ -36,16 +36,21 @@ python dwipreproc.py ./dwi
 
 Several of these tests use optimized versions of mmorf, bedpost, probtrackx and eddy, for these we refer to the build date of these unreleased versions.
 
-The `dwi` dataset provides a benchmark for processing a 140×140×81 diffusion dataset with 204 volumes. Here is the performance for version 20260309 on an 48Gb Apple M4 Pro:
+The `dwi` dataset provides a benchmark for processing a 140×140×81 diffusion dataset with 204 volumes. 
+
+```
+python dwipreproc.py --keep-temp ./dwi ./my_benchmark_results
+```
+Here is the performance for version 20260311 on an 48Gb Apple M4 Pro:
 
 | Stage                         | Seconds |
 | ----------------------------- | ------- |
-| Topup                         |     379 |
-| Eddy                          |     531 |
-| MMORF non-linear registration |      76 |
+| Topup                         |     327 |
+| Eddy                          |     509 |
+| MMORF non-linear registration |      79 |
 | Bedpost                       |     109 |
-| Probtrackx                    |      78 |
-| TOTAL                         |    1236 |
+| Probtrackx                    |     111 |
+| TOTAL                         |    1192 |
 
 Here is the same test on a 128 Gb DGX Spark using the executables from FSL 6.0.7.19.
 
@@ -58,16 +63,16 @@ Here is the same test on a 128 Gb DGX Spark using the executables from FSL 6.0.7
 | Probtrackx                    |     337 |
 | Total                         |    4958 |
 
-Here is the same test on the same 128 Gb DGX Spark using release 20260309.
+Here is the same test on the same 128 Gb DGX Spark using release 20260310.
 
 | Stage                         | Seconds |
 | ----------------------------- | ------- |
 | Topup                         |     320 |
 | Eddy                          |    1453 |
 | MMORF non-linear registration |     136 |
-| Bedpost                       |     612 |
+| Bedpost                       |     103 |
 | Probtrackx                    |      95 |
-| Total                         |    2659 |
+| Total                         |    2150 |
 
 Here is the same test on a 128 Gb AMD 7995wx (96 cores, 192 threads) with RTX4090 GPU using the executables from FSL 6.0.7.21.
 
@@ -80,16 +85,16 @@ Here is the same test on a 128 Gb AMD 7995wx (96 cores, 192 threads) with RTX409
 | Probtrackx                    |     162 |
 | TOTAL                         |    2159 |
 
-Here is the same test on the same 128 Gb 7995wx using release 20260309.
+Here is the same test on the same 128 Gb 7995wx using release 20260311.
 
 | Stage                         | Seconds |
 | ----------------------------- | ------- |
-| Topup                         |     449 |
-| Eddy                          |     425 |
+| Topup                         |     448 |
+| Eddy                          |     426 |
 | MMORF non-linear registration |     116 |
-| Bedpost                       |     274 |
-| Probtrackx                    |      33 |
-| Total                         |    1350 |
+| Bedpost                       |      64 |
+| Probtrackx                    |      37 |
+| TOTAL                         |    1135 |
 
 ### Options
 
