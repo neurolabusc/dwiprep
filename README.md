@@ -52,27 +52,27 @@ Here is the performance for version 20260311 on an 48Gb Apple M4 Pro:
 | Probtrackx                    |     111 |
 | TOTAL                         |    1192 |
 
-Here is the same test on a 128 Gb DGX Spark using the executables from FSL 6.0.7.19.
+Here is the same test on a 128 Gb DGX Spark using the executables from FSL 6.0.7.21.
 
 | Stage                         | Seconds |
 | ----------------------------- | ------- |
-| Topup                         |     318 |
-| Eddy                          |    3473 |
-| MMORF non-linear registration |     156 |
-| Bedpost                       |     630 |
-| Probtrackx                    |     337 |
-| Total                         |    4958 |
+| Topup                         |     331 |
+| Eddy                          |    2901 |
+| MMORF non-linear registration |     147 |
+| Bedpost                       |     596 |
+| Probtrackx                    |     300 |
+| TOTAL                         |    4321 |
 
-Here is the same test on the same 128 Gb DGX Spark using release 20260310.
+Here is the same test on the same 128 Gb DGX Spark using release 20260311.
 
 | Stage                         | Seconds |
 | ----------------------------- | ------- |
-| Topup                         |     320 |
-| Eddy                          |    1453 |
-| MMORF non-linear registration |     136 |
-| Bedpost                       |     103 |
-| Probtrackx                    |      95 |
-| Total                         |    2150 |
+| Topup                         |     336 |
+| Eddy                          |     905 |
+| MMORF non-linear registration |     128 |
+| Bedpost                       |     114 |
+| Probtrackx                    |      97 |
+| TOTAL                         |    1622 |
 
 Here is the same test on a 128 Gb AMD 7995wx (96 cores, 192 threads) with RTX4090 GPU using the executables from FSL 6.0.7.21.
 

@@ -76,6 +76,27 @@ def find_bedpostx():
     raise RuntimeError("No bedpostx binary found (tried bedpostx_gpu, bedpostx)")
 
 
+def find_probtrackx():
+    """Find probtrackx2_gpu binary, preferring the real ELF binary over wrappers.
+
+    FSL installs shell wrappers in share/fsl/bin/ that may incorrectly invoke
+    ELF binaries via fslpython.  Detect this and return the real binary path.
+    """
+    wrapper = shutil.which("probtrackx2_gpu")
+    if wrapper is None:
+        raise RuntimeError("probtrackx2_gpu not found on PATH")
+    real = Path(wrapper).resolve()
+    # If the wrapper is a script, try the actual binary next to it or in ../bin
+    if real.stat().st_size < 4096:
+        # Likely a small shell wrapper; look for the real binary
+        candidate = Path(os.environ.get("FSLDIR", "")) / "bin" / "probtrackx2_gpu"
+        if candidate.exists() and candidate.stat().st_size > 4096:
+            logger.info("Using real probtrackx2_gpu binary: %s", candidate)
+            return str(candidate)
+    logger.info("Using probtrackx2_gpu: %s", wrapper)
+    return wrapper
+
+
 def detect_bedpost_output_type():
     """Determine FSLOUTPUTTYPE for bedpostx outputs.
 
@@ -85,7 +106,7 @@ def detect_bedpost_output_type():
     """
     try:
         result = subprocess.run(
-            ["probtrackx2_gpu", "--help"],
+            [find_probtrackx(), "--help"],
             capture_output=True, text=True, timeout=10,
         )
         help_text = result.stdout + result.stderr
@@ -380,7 +401,7 @@ def step_topup_eddy(info, b0tolerance, nthr, isPadOdd, force=False):
     topup_b0_mean = str(tmp / "topup_b0_mean.nii.gz")
     if not step_done(brain_mask, force):
         run_cmd(["fslmaths", str(tmp / "topup_b0.nii.gz"), "-Tmean", topup_b0_mean])
-        run_cmd(["bet", topup_b0_mean, str(tmp / "brain"), "-f", "0.25", "-R", "-m"])
+        run_cmd(["bet", topup_b0_mean, str(tmp / "brain"), "-f", "0.25", "-R", "-S", "-m"])
 
     merged_nii = str(tmp / "merged.nii.gz")
     run_cmd(["fslmerge", "-t", merged_nii, str(tmp / "dti.nii.gz"), str(tmp / "dtiR.nii.gz")])
@@ -672,12 +693,11 @@ def step_extract_masks(info, output_dir, force=False):
 # Step 8: Probtrackx
 # ---------------------------------------------------------------------------
 
-def has_seedlist_support(executable):
-    """Check if the provided probtrackx2_gpu executable supports --seedlist."""
+def has_seedlist_support(probtrackx_bin):
+    """Check if probtrackx2_gpu supports --seedlist."""
     try:
-        # We now use the explicit path passed from the main step
         result = subprocess.run(
-            [executable, "--help"],
+            [probtrackx_bin, "--help"],
             capture_output=True, text=True, timeout=10,
         )
         return "--seedlist" in result.stdout or "--seedlist" in result.stderr
@@ -687,21 +707,16 @@ def has_seedlist_support(executable):
 
 def step_probtrackx(info, output_dir, force=False):
     with timed_step("Probtrackx"):
-        # 1. Resolve the correct binary at the very start
-        fsld = os.environ.get("FSLDIR")
-        if not fsld:
-            raise EnvironmentError("FSLDIR environment variable not set.")
-        
-        # Explicitly target the binary in 'bin' to bypass buggy 'share' wrappers
-        probtrackx_bin = os.path.join(fsld, "bin", "probtrackx2_gpu")
-
         masks_dir = Path(info["masks_dir"])
         bedpostx_dir = Path(info["bedpostx_dir"])
         probtrackx_dir = ensure_dir(Path(output_dir) / "probtrackx")
-        log_dir = ensure_dir(probtrackx_dir / "logs") 
+        # This is where we want the logs
+        log_dir = ensure_dir(probtrackx_dir / "logs")
 
         merged = str(bedpostx_dir / "merged")
         nodif_mask = str(bedpostx_dir / "nodif_brain_mask")
+
+        probtrackx_bin = find_probtrackx()
 
         mask_files = sorted(masks_dir.glob("*.nii"), key=lambda p: int(p.stem))
 
@@ -709,11 +724,8 @@ def step_probtrackx(info, output_dir, force=False):
         for mask_file in mask_files:
             idx = mask_file.stem
             out_dir = probtrackx_dir / idx
-            # probtrackx2_gpu --seedlist appends '+' to the output dir name
-            out_dir_plus = probtrackx_dir / f"{idx}+"
             fdt_paths = out_dir / "fdt_paths.nii.gz"
-            fdt_paths_plus = out_dir_plus / "fdt_paths.nii.gz"
-            if not (step_done(str(fdt_paths), force) or step_done(str(fdt_paths_plus), force)):
+            if not step_done(str(fdt_paths), force):
                 ensure_dir(out_dir)
                 pending.append((mask_file, out_dir))
 
@@ -721,16 +733,14 @@ def step_probtrackx(info, output_dir, force=False):
             logger.info("All probtrackx seeds already complete")
             return
 
-        # 2. Pass the resolved binary to the support check
         if has_seedlist_support(probtrackx_bin):
             seedlist_file = probtrackx_dir / "seedlist.txt"
             with open(seedlist_file, "w") as f:
                 for mask_file, out_dir in pending:
                     f.write(f"{mask_file} {out_dir}\n")
-            
             logger.info("Running probtrackx2_gpu --seedlist (%d seeds)", len(pending))
             run_cmd([
-                probtrackx_bin, # Use resolved binary
+                probtrackx_bin,
                 f"--seedlist={seedlist_file}",
                 "-P", "5000",
                 "-s", merged,
@@ -738,22 +748,18 @@ def step_probtrackx(info, output_dir, force=False):
                 "--opd", "--pd", "-l", "-c", "0.2", "--distthresh=0",
             ], cwd=log_dir)
         else:
-            logger.info("--seedlist not supported, falling back to serial fsl_sub")
-            commands = []
-            for mask_file, out_dir in pending:
-                # 3. Use the resolved binary in the task list
-                cmd = (f"{probtrackx_bin} -x {mask_file} "
-                       f"--dir={out_dir} --forcedir "
-                       f"-P 5000 -s {merged} -m {nodif_mask} "
-                       f"--opd --pd -l -c 0.2 --distthresh=0")
-                commands.append(cmd)
-
-            cmd_file = Path(output_dir) / "probtrackx_commands.txt"
-            with open(cmd_file, "w") as f:
-                f.write("\n".join(commands) + "\n")
-            
-            run_cmd(["fsl_sub", "-l", ".", "-N", "probtrackx",
-                     "-T", "1", "-t", str(cmd_file)], cwd=log_dir)
+            logger.info("--seedlist not supported, running probtrackx seeds serially (%d seeds)", len(pending))
+            for i, (mask_file, out_dir) in enumerate(pending, 1):
+                logger.info("probtrackx seed %d/%d: %s", i, len(pending), mask_file.stem)
+                run_cmd([
+                    probtrackx_bin,
+                    "-x", str(mask_file),
+                    f"--dir={out_dir}", "--forcedir",
+                    "-P", "5000",
+                    "-s", merged,
+                    "-m", nodif_mask,
+                    "--opd", "--pd", "-l", "-c", "0.2", "--distthresh=0",
+                ], cwd=log_dir)
 
 # ---------------------------------------------------------------------------
 # Step 9: Fiber Quantify
@@ -775,18 +781,10 @@ def step_fiber_quantify(info, output_dir, num_samples=5000, force=False):
     n = len(indices)
     idx_to_pos = {idx: pos for pos, idx in enumerate(indices)}
 
-    # probtrackx2_gpu --seedlist appends '+' to output dir names;
-    # build a mapping from region index to whichever path actually exists.
-    fdt_map = {}
     missing = []
     for idx in indices:
         fdt = probtrackx_dir / str(idx) / "fdt_paths.nii.gz"
-        fdt_plus = probtrackx_dir / f"{idx}+" / "fdt_paths.nii.gz"
-        if fdt.exists():
-            fdt_map[idx] = fdt
-        elif fdt_plus.exists():
-            fdt_map[idx] = fdt_plus
-        else:
+        if not fdt.exists():
             missing.append(idx)
     if missing:
         logger.warning("Probtrackx incomplete (%d/%d regions missing) — "
@@ -805,7 +803,7 @@ def step_fiber_quantify(info, output_dir, num_samples=5000, force=False):
         mask_nvox[idx] = int((mask_data > 0).sum())
 
         prob_data = nib.load(
-            str(fdt_map[idx])
+            str(probtrackx_dir / str(idx) / "fdt_paths.nii.gz")
         ).get_fdata().ravel()
         probs[idx] = prob_data
 
