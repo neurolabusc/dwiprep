@@ -317,7 +317,7 @@ def _set_eddy_outputs(info, eddy_out, tmp, brain_mask):
     info["brain_mask"] = brain_mask
 
 
-def step_topup_eddy(info, b0tolerance, nthr, isPadOdd, force=False):
+def step_topup_eddy(info, b0tolerance, nthr, isPadOdd, force=False, nthrEddy=None):
     tmp = info["tmp_dir"]
     eddy_out = str(tmp / "eddy")
     brain_mask = str(tmp / "brain_mask.nii.gz")
@@ -410,11 +410,13 @@ def step_topup_eddy(info, b0tolerance, nthr, isPadOdd, force=False):
         f.write(" ".join(["1"] * info["n_vols_dti"] + ["2"] * info["n_vols_dtiR"]) + "\n")
 
     all_bvals = np.concatenate([dti_bvals, dtiR_bvals])
+    # n.b. Eddy b_range also defaults to 100, so rounding here may not be required
     rounded_bvals = (np.round(all_bvals / 100.0) * 100).astype(int)
     save_bvals(rounded_bvals, str(tmp / 'merged.bval'))
     save_bvecs(np.hstack([load_bvecs(str(tmp / "dti.bvec")), load_bvecs(str(tmp / "dtiR.bvec"))]), str(tmp / "merged.bvec"))
+    
     with timed_step("Eddy"):
-        run_cmd([
+        eddy_cmd = [
             find_eddy(),
             f"--imain={merged_nii}",
             f"--mask={brain_mask}",
@@ -426,9 +428,16 @@ def step_topup_eddy(info, b0tolerance, nthr, isPadOdd, force=False):
             "--data_is_shelled",
             "--repol",
             f"--out={eddy_out}"
-        ])
+        ]
+        # Only append --nthr if the user explicitly requested it
+        if nthrEddy is not None:
+            eddy_cmd.append(f"--nthr={nthrEddy}") # <--- FIXED: Uses the specific Eddy count
 
+        run_cmd(eddy_cmd)
+
+    # Ensure the dictionary is populated after eddy finishes
     _set_eddy_outputs(info, eddy_out, tmp, brain_mask)
+
 
 # ---------------------------------------------------------------------------
 # Step 3: DTI Fit
@@ -944,6 +953,7 @@ def main():
     parser.add_argument("--force", action="store_true", default=False,
                         help="Re-run steps even if outputs already exist")
     parser.add_argument("-nthr", type=int, default=0)
+    parser.add_argument("-nthrEddy", type=int, default=None)
     args = parser.parse_args()
 
     from datetime import date
@@ -964,9 +974,8 @@ def main():
         raise PermissionError(f"No write permission for output directory: {output_dir}")
     
     setup_logging(output_dir / "dwipreproc.txt")
-
     if args.nthr < 1: args.nthr = max(1, multiprocessing.cpu_count() - 1)
-    
+
     check_binaries(["probtrackx2_gpu", "eddy", "flirt", "bet", "topup", "fslmaths", "fslmerge",
                     "dtifit", "mmorf", "applywarp", "fsl_sub"])
     if not args.no_bedpost:
@@ -975,8 +984,7 @@ def main():
     with timed_step("TOTAL"):
         logger.info("=== Input Validation ===")
         info = validate_and_stage(str(input_dir), output_dir)
-
-        step_topup_eddy(info, args.b0tolerance, args.nthr, not args.no_pad_odd, args.force)
+        step_topup_eddy(info, args.b0tolerance, args.nthr, not args.no_pad_odd, args.force, args.nthrEddy)
         base_prefix = output_dir / args.baseName
         step_dtifit(info, str(base_prefix), args.force)
 

@@ -32,6 +32,26 @@ The `dwi` demo is more typical of real world data.
 python dwipreproc.py ./dwi
 ```
 
+By default, the pipeline allocates `N-1` logical processors (where `N` is the total system count) to balance high performance with system responsiveness.
+
+For clustered computer nodes or shared environments, you may wish to explicitly limit this value to avoid resource contention. While additional cores follow Amdahl's Law—yielding diminishing returns as counts increase—providing a moderate number of threads is essential for maintaining high GPU utilization. You can explicitly set the thread count using the `-nthr` flag.
+
+However, Eddy requires special consideration. The original FSL Eddy implementation for GPU does not support the `--nthr` option and is restricted to a single thread. In contrast, the optimized version allows for multi-threading, providing dramatic performance benefits that scale effectively up to the number of shells in your diffusion dataset. With the optimized version, if a thread count is not explicitly provided, the software will automatically determine an allocation based on available CPU threads and system RAM.
+
+Due to these differences in Eddy versions, you should choose your command based on which implementation is available on your system.
+
+For the original Eddy implementation, use:
+
+```bash
+python dwipreproc.py -nthr 4 ./dwi 
+```
+
+For the optimized Eddy implementation, use:
+
+```bash
+python dwipreproc.py -nthr 5 -nthrEddy 4 ./quick
+```
+
 # Performance
 
 Several of these tests use optimized versions of mmorf, bedpost, probtrackx and eddy, for these we refer to the build date of these unreleased versions.
