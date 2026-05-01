@@ -61,6 +61,18 @@ The `dwi` dataset provides a benchmark for processing a 140×140×81 diffusion d
 ```
 python dwipreproc.py --keep-temp ./dwi ./my_benchmark_results
 ```
+Here is the performance for version 20260311 on an 64Gb Apple M5 Max:
+
+| Stage                         | Seconds |
+| ----------------------------- | ------- |
+| Topup                         |     334 |
+| Eddy                          |     340 |
+| MMORF non-linear registration |      39 |
+| Bedpost                       |      58 |
+| Probtrackx                    |      67 |
+| TOTAL                         |     894 |
+
+
 Here is the performance for version 20260311 on an 48Gb Apple M4 Pro:
 
 | Stage                         | Seconds |
